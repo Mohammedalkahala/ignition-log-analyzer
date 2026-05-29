@@ -20,38 +20,72 @@ Parse Logs → Classify Severity → Extract IPs → Enrich via VT/Shodan → Ex
 
 ---
 
-## Why It Exists
-
-OT/ICS environments like Ignition Gateway generate thousands of log lines per shift. Watch operations analysts need to immediately identify:
-- Which events are genuinely critical vs routine noise
-- Which external IPs in the logs are known malicious actors
-- What vulnerabilities those IPs are exposing
-
-This pipeline automates that entire workflow — enabling overnight SOC teams to focus on response, not data wrangling.
-
----
-
 ## Quick Start
+
+### Windows (PowerShell)
+
+```powershell
+# Install dependencies
+py -m pip install pandas requests
+
+# Run with built-in sample OT/ICS logs (no API keys needed)
+py main.py
+
+# Run against a real Ignition Gateway wrapper log
+py main.py C:\path\to\wrapper.log
+
+# Run with live VirusTotal + Shodan API calls
+$env:VT_API_KEY="your_vt_key_here"
+$env:SHODAN_API_KEY="your_shodan_key_here"
+py main.py C:\path\to\wrapper.log --live
+```
+
+### Linux / Mac
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+pip3 install pandas requests
 
 # Run with built-in sample OT/ICS logs (no API keys needed)
 python3 main.py
 
-# Run against a real log file
+# Run against a real Ignition Gateway wrapper log
 python3 main.py /var/log/ignition/wrapper.log
 
 # Run with live VirusTotal + Shodan API calls
-export VT_API_KEY="your_key_here"
-export SHODAN_API_KEY="your_key_here"
+export VT_API_KEY="your_vt_key_here"
+export SHODAN_API_KEY="your_shodan_key_here"
 python3 main.py /var/log/ignition/wrapper.log --live
 ```
 
 ---
 
-## Sample Output
+## API Keys — Do You Need Them?
+
+**No — demo mode works without any API keys.**
+
+Running without API keys uses built-in demo enrichment that produces realistic output for testing and presentation. This is the recommended starting point.
+
+When you're ready to use real enrichment:
+
+**VirusTotal (Free tier available)**
+- Sign up at virustotal.com
+- Go to your profile → API Key
+- Free tier: 4 requests per minute, 500 requests per day
+- Set key: `$env:VT_API_KEY="your_key"` (Windows) or `export VT_API_KEY="your_key"` (Linux/Mac)
+
+**Shodan (Free tier very limited)**
+- Sign up at account.shodan.io
+- Free tier has limited query access
+- Personal membership: $49 one-time fee for full access
+- Enterprise accounts used in production SOC environments
+- Set key: `$env:SHODAN_API_KEY="your_key"` (Windows) or `export SHODAN_API_KEY="your_key"` (Linux/Mac)
+
+---
+
+## Real-World Test Results
+
+Tested against a live Ignition Gateway server running on Linux (Ubuntu, Proxmox VM):
 
 ```
 ============================================================
@@ -60,9 +94,37 @@ python3 main.py /var/log/ignition/wrapper.log --live
 ============================================================
 
 [STEP 1] Parsing and classifying log data...
-[+] Parsed 25 log entries
+[+] Parsed 29,693 log entries from wrapper.log
 
 [STEP 2] Severity Classification
+  🔴 CRITICAL :      6  (connection refused — SQL exceptions)
+  🟠 HIGH     :    323
+  🟡 MEDIUM   :     57
+  🟢 LOW      :  29,307
+
+[STEP 3] Extracted 2 unique external IPs
+
+[STEP 4] IP Enrichment (demo mode)
+  All IPs resolved to LOW risk
+
+[STEP 5] Reports exported to /output/
+[✓] Pipeline complete.
+```
+
+**Key insight from real data:** Ignition Gateway sometimes logs serious errors like SQL
+connection failures at INFO level. This pipeline catches them anyway via keyword matching —
+something you would miss if filtering only by the log's own severity label.
+
+---
+
+## Sample Output (Built-in Demo Logs)
+
+```
+============================================================
+  IGNITION GATEWAY LOG ANALYZER — SECURITY DASHBOARD
+============================================================
+  Total     : 25 events
+------------------------------------------------------------
   🔴 CRITICAL :   9  (36.0%)
   🟠 HIGH     :   7
   🟡 MEDIUM   :   2
@@ -73,14 +135,9 @@ python3 main.py /var/log/ignition/wrapper.log --live
   Keyword: privilege escalation   | Escalation attempt process 1337
   Keyword: ssl handshake failed   | SSL error from 198.51.100.7
 
-[STEP 3] Extracted 3 unique external IPs
-
-[STEP 4] IP Enrichment Results
-  [CRITICAL] 203.0.113.5  — VT: MALICIOUS | ChinaNet | Ports: 22,80,443,3389 | CVEs: 2
-  [CRITICAL] 198.51.100.99 — VT: MALICIOUS | DigitalOcean | Ports: 80,443,4444 | CVEs: 1
-  [LOW]      198.51.100.7  — VT: SUSPICIOUS | Rostelecom | Ports: 22,443
-
-[STEP 5] Reports exported to /output/
+  IP ENRICHMENT DASHBOARD
+  [CRITICAL] 203.0.113.5   — VT: MALICIOUS | ChinaNet  | CVEs: 2
+  [CRITICAL] 198.51.100.99 — VT: MALICIOUS | DigitalOcean | CVEs: 1
 ```
 
 ---
@@ -92,7 +149,9 @@ python3 main.py /var/log/ignition/wrapper.log --live
 | `all_events_TIMESTAMP.csv` | Full classified log dataset |
 | `critical_events_TIMESTAMP.csv` | CRITICAL events only |
 | `high_events_TIMESTAMP.csv` | HIGH events only |
-| `enrichment_report_TIMESTAMP.csv` | IP enrichment results with risk scores |
+| `medium_events_TIMESTAMP.csv` | MEDIUM events only |
+| `low_events_TIMESTAMP.csv` | LOW events only |
+| `enrichment_report_TIMESTAMP.csv` | IP enrichment with risk scores |
 | `enrichment_report_TIMESTAMP.json` | Structured enrichment data |
 | `summary_TIMESTAMP.json` | Event counts, top keywords, metadata |
 
@@ -115,7 +174,7 @@ ignition-log-analyzer/
 
 | Level | Examples |
 |-------|---------|
-| CRITICAL | authentication failure, unauthorized, privilege escalation, data loss, ssl handshake failed, exploit, malware, fatal |
+| CRITICAL | authentication failure, unauthorized, privilege escalation, data loss, ssl handshake failed, exploit, malware, fatal, connection refused |
 | HIGH | error, failed, timeout, suspicious, anomaly, brute force, scan detected, high cpu |
 | MEDIUM | warning, retry, degraded, configuration change, disconnected |
 | LOW | info, started, heartbeat, backup, success, connected |
@@ -125,7 +184,7 @@ ignition-log-analyzer/
 ## Supported Log Formats
 
 - Standard Linux syslog
-- Ignition Gateway format
+- Ignition Gateway wrapper.log format
 - ISO timestamp format
 - Raw unstructured log lines (fallback)
 
@@ -143,17 +202,16 @@ ignition-log-analyzer/
 
 ## Real-World Context
 
-Built from direct experience securing 24/7 OT/ICS industrial environments at Tamaki Control — where manufacturing and utility clients cannot tolerate security blind spots. This pipeline automates the initial triage and enrichment workflow that watch operations analysts would otherwise perform manually.
+Built from direct experience securing 24/7 OT/ICS industrial environments at Tamaki Control.
+Tested against live Ignition Gateway wrapper logs from a production Linux server.
 
-**Directly applicable to:**
-- NERC E-ISAC Watch Operations
-- Electric utility security operations centers
-- Manufacturing plant security monitoring
-- Any 24/7 OT/ICS security operations environment
+This pipeline automates the initial triage and enrichment workflow that watch operations
+analysts would otherwise perform manually — directly applicable to NERC E-ISAC Watch
+Operations and any critical infrastructure SOC environment.
 
 ---
 
 ## Author
 
-Mohammed Alkahala — Security Operations Engineer  
+Mohammed Alkahala — Security Operations Engineer
 [LinkedIn](https://linkedin.com/in/mohammed-alkahala-6362b4192) | [GitHub](https://github.com/Mohammedalkahala)
